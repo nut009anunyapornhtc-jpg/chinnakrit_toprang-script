@@ -3,8 +3,6 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-local GuiService = game:GetService("GuiService")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -31,13 +29,9 @@ local COLORS = {
 	COLLAPSE_BG   = Color3.fromRGB(75, 75, 85),
 }
 
-local FULL_SIZE = UDim2.new(0, 360, 0, 215)
+local FULL_SIZE = UDim2.new(0, 360, 0, 210)
 local MINI_SIZE = UDim2.new(0, 360, 0, 40)
-local DEFAULT_POS = UDim2.new(0, 10, 0.5, -107)
-
--- ปุ่มเลือกพระแท้ (สีเขียว) ตามหน้าจอเกม
-local GENUINE_TIER1_KEYWORDS = { "แท้" }
-local GENUINE_TIER2_KEYWORDS = { "พระแท้", "เช่า", "รับเช่า", "buy", "rent", "ซื้อ" }
+local DEFAULT_POS = UDim2.new(0, 10, 0.5, -105)
 
 local function formatMoney(amount)
 	local num = tonumber(amount) or 0
@@ -56,108 +50,6 @@ local function formatMoney(amount)
 	return "฿" .. formatted
 end
 
-local function isClickableGuiCandidate(obj)
-	if not (obj:IsA("TextButton") or obj:IsA("ImageButton")) then
-		return false
-	end
-	if not obj.Visible or not obj.Active then
-		return false
-	end
-	if obj.AbsoluteSize.X <= 4 or obj.AbsoluteSize.Y <= 4 then
-		return false
-	end
-	if obj:FindFirstAncestor("SongPhraGUI") then
-		return false
-	end
-	return true
-end
-
-local function getGuiCombinedText(obj)
-	local parts = {}
-	if obj:IsA("TextButton") and obj.Text and obj.Text ~= "" then
-		table.insert(parts, tostring(obj.Text))
-	end
-	if obj.Name and obj.Name ~= "" then
-		table.insert(parts, tostring(obj.Name))
-	end
-	for _, desc in ipairs(obj:GetDescendants()) do
-		if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Text and desc.Text ~= "" then
-			table.insert(parts, tostring(desc.Text))
-		end
-	end
-	return table.concat(parts, " ")
-end
-
-local function containsExactOrWordToken(text, kw)
-	local lowerText = string.lower(text)
-	local lowerKw = string.lower(kw)
-
-	if lowerKw == "แท้" then
-		local stripped = string.gsub(lowerText, "พระแท้", "")
-		return string.find(stripped, "แท้", 1, true) ~= nil
-	end
-
-	return string.find(lowerText, lowerKw, 1, true) ~= nil
-end
-
-local function hasAnyKeyword(text, keywords)
-	for _, kw in ipairs(keywords) do
-		if containsExactOrWordToken(text, kw) then
-			return true
-		end
-	end
-	return false
-end
-
-local function findGenuineButtonCandidate()
-	local tier1Match = nil
-	local tier2Match = nil
-
-	for _, desc in ipairs(PlayerGui:GetDescendants()) do
-		if isClickableGuiCandidate(desc) then
-			local combined = getGuiCombinedText(desc)
-			if not tier1Match and hasAnyKeyword(combined, GENUINE_TIER1_KEYWORDS) then
-				tier1Match = desc
-			elseif not tier2Match and hasAnyKeyword(combined, GENUINE_TIER2_KEYWORDS) then
-				tier2Match = desc
-			end
-		end
-	end
-
-	return tier1Match or tier2Match
-end
-
-local function clickGuiObject(btn)
-	if not btn or not btn.Parent then return false end
-
-	local absPos = btn.AbsolutePosition
-	local absSize = btn.AbsoluteSize
-	local inset = GuiService:GetGuiInset()
-	local centerX = absPos.X + absSize.X * 0.5 + inset.X
-	local centerY = absPos.Y + absSize.Y * 0.5 + inset.Y
-
-	local vimClicked = false
-	if absSize.X > 0 and absSize.Y > 0 then
-		vimClicked = pcall(function()
-			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
-			task.wait(0.06)
-			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
-		end)
-	end
-
-	if typeof(firesignal) == "function" then
-		for _, sigName in ipairs({ "MouseButton1Click", "Activated", "MouseButton1Down" }) do
-			pcall(function()
-				if btn[sigName] then
-					firesignal(btn[sigName])
-				end
-			end)
-		end
-	end
-
-	return vimClicked or (typeof(firesignal) == "function")
-end
-
 local Krypt = {}
 Krypt.__index = Krypt
 
@@ -166,12 +58,9 @@ function Krypt.new()
 	self.isRunning = true
 	self.isEnabled = true
 	self.isCollapsed = false
-	self.autoBuyGenuine = true
-	self.lastActionTime = 0
 	self.currentPos = DEFAULT_POS
 	self.currentModel = nil
 	self.trackedModels = {}
-	self.boughtModels = {}
 	self.originalBuild = nil
 	self.heartbeatConn = nil
 	self.inputChangedConn = nil
@@ -198,27 +87,6 @@ function Krypt:clearHighlights()
 				end
 			end
 		end
-	end
-end
-
-function Krypt:tryAutoBuyGenuine(model, analysis)
-	if not self.isRunning or not self.isEnabled or not self.autoBuyGenuine then return end
-	if not analysis or analysis.isFake == true then return end
-	if not model or not model.Parent or self.boughtModels[model] then return end
-
-	local now = os.clock()
-	if now - self.lastActionTime < 0.5 then return end
-
-	local targetBtn = findGenuineButtonCandidate()
-	if targetBtn then
-		self.lastActionTime = now
-		self.boughtModels[model] = true
-		task.spawn(function()
-			task.wait(0.12)
-			if self.isRunning and self.isEnabled and self.autoBuyGenuine and model and model.Parent and not analysis.isFake then
-				clickGuiObject(targetBtn)
-			end
-		end)
 	end
 end
 
@@ -378,7 +246,7 @@ function Krypt:createGUI()
 	stroke.Thickness = 2.5
 	stroke.Parent = frame
 
-	-- แถบด้านบนสำหรับลากย้ายหน้าต่างและควบคุมปุ่ม
+	-- แถบด้านบนสำหรับลากย้ายหน้าต่าง
 	local headerBar = Instance.new("Frame")
 	headerBar.Name = "Header"
 	headerBar.Size = UDim2.new(1, 0, 0, 38)
@@ -389,18 +257,18 @@ function Krypt:createGUI()
 	headerBar.Parent = frame
 
 	local titleLabel = Instance.new("TextLabel")
-	titleLabel.Size = UDim2.new(1, -144, 0, 22)
-	titleLabel.Position = UDim2.new(0, 10, 0, 9)
+	titleLabel.Size = UDim2.new(1, -172, 0, 24)
+	titleLabel.Position = UDim2.new(0, 10, 0, 8)
 	titleLabel.BackgroundTransparency = 1
 	titleLabel.Font = Enum.Font.GothamBold
 	titleLabel.TextScaled = true
-	titleLabel.Text = "🔍 SongPhra"
+	titleLabel.Text = "🔍 Cr.Chinnakrit Topang"
 	titleLabel.TextColor3 = COLORS.GRAY_TITLE
 	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 	titleLabel.ZIndex = 2
 	titleLabel.Parent = headerBar
 
-	-- ปุ่มเลื่อนเปิด/ปิดสคริปต์หลัก (Toggle Switch)
+	-- ปุ่มเลื่อนเปิด/ปิดสคริปต์ (Toggle Switch)
 	local switchText = Instance.new("TextLabel")
 	switchText.Size = UDim2.new(0, 48, 0, 20)
 	switchText.Position = UDim2.new(1, -134, 0, 10)
@@ -438,8 +306,8 @@ function Krypt:createGUI()
 	-- ปุ่มพับ/ขยายหน้าต่าง
 	local collapseBtn = Instance.new("TextButton")
 	collapseBtn.Name = "CollapseBtn"
-	collapseBtn.Size = UDim2.new(0, 24, 0, 22)
-	collapseBtn.Position = UDim2.new(1, -28, 0, 9)
+	collapseBtn.Size = UDim2.new(0, 26, 0, 22)
+	collapseBtn.Position = UDim2.new(1, -34, 0, 9)
 	collapseBtn.BackgroundColor3 = COLORS.COLLAPSE_BG
 	collapseBtn.BorderSizePixel = 0
 	collapseBtn.Font = Enum.Font.GothamBold
@@ -461,7 +329,7 @@ function Krypt:createGUI()
 	bodyContainer.Parent = frame
 
 	local statusLabel = Instance.new("TextLabel")
-	statusLabel.Size = UDim2.new(1, -20, 0, 48)
+	statusLabel.Size = UDim2.new(1, -20, 0, 50)
 	statusLabel.Position = UDim2.new(0, 10, 0, 2)
 	statusLabel.BackgroundTransparency = 1
 	statusLabel.Font = Enum.Font.GothamBold
@@ -474,8 +342,8 @@ function Krypt:createGUI()
 	statusLabel.Parent = bodyContainer
 
 	local infoLabel = Instance.new("TextLabel")
-	infoLabel.Size = UDim2.new(1, -20, 0, 24)
-	infoLabel.Position = UDim2.new(0, 10, 0, 52)
+	infoLabel.Size = UDim2.new(1, -20, 0, 26)
+	infoLabel.Position = UDim2.new(0, 10, 0, 56)
 	infoLabel.BackgroundTransparency = 1
 	infoLabel.Font = Enum.Font.Gotham
 	infoLabel.TextScaled = true
@@ -486,8 +354,8 @@ function Krypt:createGUI()
 	infoLabel.Parent = bodyContainer
 
 	local faultLabel = Instance.new("TextLabel")
-	faultLabel.Size = UDim2.new(1, -20, 0, 50)
-	faultLabel.Position = UDim2.new(0, 10, 0, 78)
+	faultLabel.Size = UDim2.new(1, -20, 0, 54)
+	faultLabel.Position = UDim2.new(0, 10, 0, 84)
 	faultLabel.BackgroundTransparency = 1
 	faultLabel.Font = Enum.Font.Gotham
 	faultLabel.TextScaled = true
@@ -499,7 +367,7 @@ function Krypt:createGUI()
 	faultLabel.Parent = bodyContainer
 
 	local closeBtn = Instance.new("TextButton")
-	closeBtn.Size = UDim2.new(0, 110, 0, 26)
+	closeBtn.Size = UDim2.new(0, 100, 0, 26)
 	closeBtn.Position = UDim2.new(0, 10, 1, -32)
 	closeBtn.BackgroundColor3 = Color3.fromRGB(160, 40, 40)
 	closeBtn.Font = Enum.Font.GothamBold
@@ -705,8 +573,6 @@ function Krypt:updateGUI(analysis, model)
 			self.faultLabel.Text = "✅ ตำหนิ/พิมพ์ตรงตามตำรา (ราคากลาง " .. formatMoney(price) .. ")"
 		end
 		self.faultLabel.TextColor3 = Color3.fromRGB(150, 255, 150)
-
-		self:tryAutoBuyGenuine(model, analysis)
 	end
 end
 
@@ -781,7 +647,6 @@ function Krypt:startHeartbeat()
 		for model, _ in pairs(self.trackedModels) do
 			if not model or not model.Parent then
 				self.trackedModels[model] = nil
-				self.boughtModels[model] = nil
 			end
 		end
 
@@ -805,7 +670,6 @@ end
 function Krypt:destroy()
 	self.isRunning = false
 	self.isEnabled = false
-	self.autoBuyGenuine = false
 
 	if self.heartbeatConn then
 		self.heartbeatConn:Disconnect()
@@ -822,7 +686,6 @@ function Krypt:destroy()
 
 	self:clearHighlights()
 	self.trackedModels = {}
-	self.boughtModels = {}
 
 	if self.originalBuild then
 		AmuletLab.Build = self.originalBuild
