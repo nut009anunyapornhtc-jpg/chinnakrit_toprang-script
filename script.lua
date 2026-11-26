@@ -27,27 +27,17 @@ local COLORS = {
 	-- สีปุ่มเลื่อนเปิด/ปิด และปุ่มพับหน้าต่าง
 	SWITCH_ON_BG  = Color3.fromRGB(45, 165, 85),
 	SWITCH_OFF_BG = Color3.fromRGB(85, 85, 92),
-	RENT_ON_BG    = Color3.fromRGB(35, 135, 200),
-	RENT_OFF_BG   = Color3.fromRGB(75, 75, 82),
-	REJECT_ON_BG  = Color3.fromRGB(195, 65, 65),
-	REJECT_OFF_BG = Color3.fromRGB(75, 75, 82),
-	TRAY_ON_BG    = Color3.fromRGB(165, 115, 35),
-	TRAY_OFF_BG   = Color3.fromRGB(75, 75, 82),
 	SWITCH_KNOB   = Color3.fromRGB(240, 240, 245),
 	COLLAPSE_BG   = Color3.fromRGB(75, 75, 85),
 }
 
-local FULL_SIZE = UDim2.new(0, 570, 0, 215)
-local MINI_SIZE = UDim2.new(0, 570, 0, 40)
+local FULL_SIZE = UDim2.new(0, 360, 0, 215)
+local MINI_SIZE = UDim2.new(0, 360, 0, 40)
 local DEFAULT_POS = UDim2.new(0, 10, 0.5, -107)
 
-local GENUINE_PRIORITY_KEYWORDS = { "เช่า" }
-local GENUINE_FALLBACK_KEYWORDS = { "พระแท้", "rent", "buy", "ซื้อ", "claim", "accept" }
-
-local FAKE_PRIORITY_KEYWORDS = { "พระเกี" }
-local FAKE_FALLBACK_KEYWORDS = { "ไม่เอา", "decline", "reject", "skip", "pass", "no", "ไม่เช่า", "ปฏิเสธ", "ข้าม", "ยกเลิก" }
-
-local TRAY_KEYWORDS = { "ถาด", "tray", "ส่อง", "inspect", "ดูพระ" }
+-- ปุ่มเลือกพระแท้ (สีเขียว) ตามหน้าจอเกม
+local GENUINE_TIER1_KEYWORDS = { "แท้" }
+local GENUINE_TIER2_KEYWORDS = { "พระแท้", "เช่า", "รับเช่า", "buy", "rent", "ซื้อ" }
 
 local function formatMoney(amount)
 	local num = tonumber(amount) or 0
@@ -73,6 +63,9 @@ local function isClickableGuiCandidate(obj)
 	if not obj.Visible or not obj.Active then
 		return false
 	end
+	if obj.AbsoluteSize.X <= 4 or obj.AbsoluteSize.Y <= 4 then
+		return false
+	end
 	if obj:FindFirstAncestor("SongPhraGUI") then
 		return false
 	end
@@ -80,83 +73,89 @@ local function isClickableGuiCandidate(obj)
 end
 
 local function getGuiCombinedText(obj)
-	local labelText = ""
-	if obj:IsA("TextButton") then
-		labelText = tostring(obj.Text or "")
+	local parts = {}
+	if obj:IsA("TextButton") and obj.Text and obj.Text ~= "" then
+		table.insert(parts, tostring(obj.Text))
+	end
+	if obj.Name and obj.Name ~= "" then
+		table.insert(parts, tostring(obj.Name))
 	end
 	for _, desc in ipairs(obj:GetDescendants()) do
-		if desc:IsA("TextLabel") or desc:IsA("TextButton") then
-			labelText = labelText .. " " .. tostring(desc.Text or "")
+		if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Text and desc.Text ~= "" then
+			table.insert(parts, tostring(desc.Text))
 		end
 	end
-	return string.lower(labelText)
+	return table.concat(parts, " ")
 end
 
-local function hasAnyKeyword(lowerText, keywords)
+local function containsExactOrWordToken(text, kw)
+	local lowerText = string.lower(text)
+	local lowerKw = string.lower(kw)
+
+	if lowerKw == "แท้" then
+		local stripped = string.gsub(lowerText, "พระแท้", "")
+		return string.find(stripped, "แท้", 1, true) ~= nil
+	end
+
+	return string.find(lowerText, lowerKw, 1, true) ~= nil
+end
+
+local function hasAnyKeyword(text, keywords)
 	for _, kw in ipairs(keywords) do
-		if string.find(lowerText, string.lower(kw), 1, true) then
+		if containsExactOrWordToken(text, kw) then
 			return true
 		end
 	end
 	return false
 end
 
-local function findPriorityButton(priorityKeywords, fallbackKeywords)
-	local priorityMatch = nil
-	local fallbackMatch = nil
+local function findGenuineButtonCandidate()
+	local tier1Match = nil
+	local tier2Match = nil
 
 	for _, desc in ipairs(PlayerGui:GetDescendants()) do
 		if isClickableGuiCandidate(desc) then
-			local lower = getGuiCombinedText(desc)
-			if not priorityMatch and hasAnyKeyword(lower, priorityKeywords) then
-				priorityMatch = desc
-			elseif not fallbackMatch and hasAnyKeyword(lower, fallbackKeywords) then
-				fallbackMatch = desc
+			local combined = getGuiCombinedText(desc)
+			if not tier1Match and hasAnyKeyword(combined, GENUINE_TIER1_KEYWORDS) then
+				tier1Match = desc
+			elseif not tier2Match and hasAnyKeyword(combined, GENUINE_TIER2_KEYWORDS) then
+				tier2Match = desc
 			end
 		end
 	end
 
-	return priorityMatch or fallbackMatch
-end
-
-local function findGenuineButtonCandidate()
-	return findPriorityButton(GENUINE_PRIORITY_KEYWORDS, GENUINE_FALLBACK_KEYWORDS)
-end
-
-local function findRejectButtonCandidate()
-	return findPriorityButton(FAKE_PRIORITY_KEYWORDS, FAKE_FALLBACK_KEYWORDS)
+	return tier1Match or tier2Match
 end
 
 local function clickGuiObject(btn)
 	if not btn or not btn.Parent then return false end
 
-	if typeof(firesignal) == "function" then
-		local fired = false
-		for _, sigName in ipairs({ "Activated", "MouseButton1Click", "MouseButton1Down" }) do
-			local ok = pcall(function()
-				if btn[sigName] then
-					firesignal(btn[sigName])
-					fired = true
-				end
-			end)
-			if fired then return true end
-		end
-	end
-
 	local absPos = btn.AbsolutePosition
 	local absSize = btn.AbsoluteSize
-	if absSize.X <= 0 or absSize.Y <= 0 then return false end
-
 	local inset = GuiService:GetGuiInset()
 	local centerX = absPos.X + absSize.X * 0.5 + inset.X
 	local centerY = absPos.Y + absSize.Y * 0.5 + inset.Y
 
-	local okVim = pcall(function()
-		VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
-		task.wait(0.05)
-		VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
-	end)
-	return okVim
+	local vimClicked = false
+	if absSize.X > 0 and absSize.Y > 0 then
+		vimClicked = pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 0)
+			task.wait(0.06)
+			VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 0)
+		end)
+	end
+
+	if typeof(firesignal) == "function" then
+		for _, sigName in ipairs({ "MouseButton1Click", "Activated", "MouseButton1Down" }) do
+			pcall(function()
+				if btn[sigName] then
+					firesignal(btn[sigName])
+				end
+			end)
+		end
+	end
+
+	return vimClicked or (typeof(firesignal) == "function")
 end
 
 local Krypt = {}
@@ -167,17 +166,12 @@ function Krypt.new()
 	self.isRunning = true
 	self.isEnabled = true
 	self.isCollapsed = false
-	self.autoBuyGenuine = false
-	self.autoRejectFake = false
-	self.autoInspectTray = false
+	self.autoBuyGenuine = true
 	self.lastActionTime = 0
-	self.lastTrayTime = 0
 	self.currentPos = DEFAULT_POS
 	self.currentModel = nil
 	self.trackedModels = {}
 	self.boughtModels = {}
-	self.rejectedModels = {}
-	self.inspectedTargets = {}
 	self.originalBuild = nil
 	self.heartbeatConn = nil
 	self.inputChangedConn = nil
@@ -191,15 +185,6 @@ function Krypt.new()
 	self.switchTrack = nil
 	self.switchKnob = nil
 	self.switchText = nil
-	self.rentTrack = nil
-	self.rentKnob = nil
-	self.rentText = nil
-	self.rejectTrack = nil
-	self.rejectKnob = nil
-	self.rejectText = nil
-	self.trayTrack = nil
-	self.trayKnob = nil
-	self.trayText = nil
 	self.collapseBtn = nil
 	return self
 end
@@ -216,201 +201,24 @@ function Krypt:clearHighlights()
 	end
 end
 
-function Krypt:updateRentSwitchVisual(instant)
-	if not self.rentTrack or not self.rentKnob or not self.rentText then return end
-
-	local targetPos = self.autoBuyGenuine
-		and UDim2.new(1, -20, 0.5, -9)
-		or UDim2.new(0, 2, 0.5, -9)
-
-	local targetBg = self.autoBuyGenuine
-		and COLORS.RENT_ON_BG
-		or COLORS.RENT_OFF_BG
-
-	self.rentText.Text = self.autoBuyGenuine and "เช่าซื้อ: เปิด" or "เช่าซื้อ: ปิด"
-
-	if instant then
-		self.rentKnob.Position = targetPos
-		self.rentTrack.BackgroundColor3 = targetBg
-	else
-		local info = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		TweenService:Create(self.rentKnob, info, { Position = targetPos }):Play()
-		TweenService:Create(self.rentTrack, info, { BackgroundColor3 = targetBg }):Play()
-	end
-end
-
-function Krypt:updateRejectSwitchVisual(instant)
-	if not self.rejectTrack or not self.rejectKnob or not self.rejectText then return end
-
-	local targetPos = self.autoRejectFake
-		and UDim2.new(1, -20, 0.5, -9)
-		or UDim2.new(0, 2, 0.5, -9)
-
-	local targetBg = self.autoRejectFake
-		and COLORS.REJECT_ON_BG
-		or COLORS.REJECT_OFF_BG
-
-	self.rejectText.Text = self.autoRejectFake and "ไม่เช่าเก๊: เปิด" or "ไม่เช่าเก๊: ปิด"
-
-	if instant then
-		self.rejectKnob.Position = targetPos
-		self.rejectTrack.BackgroundColor3 = targetBg
-	else
-		local info = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		TweenService:Create(self.rejectKnob, info, { Position = targetPos }):Play()
-		TweenService:Create(self.rejectTrack, info, { BackgroundColor3 = targetBg }):Play()
-	end
-end
-
-function Krypt:updateTraySwitchVisual(instant)
-	if not self.trayTrack or not self.trayKnob or not self.trayText then return end
-
-	local targetPos = self.autoInspectTray
-		and UDim2.new(1, -20, 0.5, -9)
-		or UDim2.new(0, 2, 0.5, -9)
-
-	local targetBg = self.autoInspectTray
-		and COLORS.TRAY_ON_BG
-		or COLORS.TRAY_OFF_BG
-
-	self.trayText.Text = self.autoInspectTray and "ดูถาด: เปิด" or "ดูถาด: ปิด"
-
-	if instant then
-		self.trayKnob.Position = targetPos
-		self.trayTrack.BackgroundColor3 = targetBg
-	else
-		local info = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-		TweenService:Create(self.trayKnob, info, { Position = targetPos }):Play()
-		TweenService:Create(self.trayTrack, info, { BackgroundColor3 = targetBg }):Play()
-	end
-end
-
-function Krypt:setAutoBuyGenuine(enabled, instant)
-	if not self.isRunning then return end
-	self.autoBuyGenuine = (enabled == true)
-	self:updateRentSwitchVisual(instant)
-
-	if self.autoBuyGenuine and self.isEnabled and self.currentModel and self.currentModel.Parent and self.trackedModels[self.currentModel] then
-		self:tryAutoBuyGenuine(self.currentModel, self.trackedModels[self.currentModel])
-	end
-end
-
-function Krypt:setAutoRejectFake(enabled, instant)
-	if not self.isRunning then return end
-	self.autoRejectFake = (enabled == true)
-	self:updateRejectSwitchVisual(instant)
-
-	if self.autoRejectFake and self.isEnabled and self.currentModel and self.currentModel.Parent and self.trackedModels[self.currentModel] then
-		self:tryAutoRejectFake(self.currentModel, self.trackedModels[self.currentModel])
-	end
-end
-
-function Krypt:setAutoInspectTray(enabled, instant)
-	if not self.isRunning then return end
-	self.autoInspectTray = (enabled == true)
-	self:updateTraySwitchVisual(instant)
-
-	if self.autoInspectTray and self.isEnabled then
-		self:tryAutoInspectTray()
-	end
-end
-
 function Krypt:tryAutoBuyGenuine(model, analysis)
 	if not self.isRunning or not self.isEnabled or not self.autoBuyGenuine then return end
 	if not analysis or analysis.isFake == true then return end
 	if not model or not model.Parent or self.boughtModels[model] then return end
 
 	local now = os.clock()
-	if now - self.lastActionTime < 0.6 then return end
+	if now - self.lastActionTime < 0.5 then return end
 
 	local targetBtn = findGenuineButtonCandidate()
 	if targetBtn then
 		self.lastActionTime = now
 		self.boughtModels[model] = true
 		task.spawn(function()
-			task.wait(0.08)
+			task.wait(0.12)
 			if self.isRunning and self.isEnabled and self.autoBuyGenuine and model and model.Parent and not analysis.isFake then
 				clickGuiObject(targetBtn)
 			end
 		end)
-	end
-end
-
-function Krypt:tryAutoRejectFake(model, analysis)
-	if not self.isRunning or not self.isEnabled or not self.autoRejectFake then return end
-	if not analysis or analysis.isFake ~= true then return end
-	if not model or not model.Parent or self.rejectedModels[model] then return end
-
-	local now = os.clock()
-	if now - self.lastActionTime < 0.6 then return end
-
-	local targetBtn = findRejectButtonCandidate()
-	if targetBtn then
-		self.lastActionTime = now
-		self.rejectedModels[model] = true
-		task.spawn(function()
-			task.wait(0.08)
-			if self.isRunning and self.isEnabled and self.autoRejectFake and model and model.Parent and analysis.isFake then
-				clickGuiObject(targetBtn)
-			end
-		end)
-	end
-end
-
-function Krypt:tryAutoInspectTray()
-	if not self.isRunning or not self.isEnabled or not self.autoInspectTray then return end
-	if self.currentModel and self.currentModel.Parent then return end
-
-	local now = os.clock()
-	if now - self.lastTrayTime < 0.8 then return end
-
-	for _, desc in ipairs(PlayerGui:GetDescendants()) do
-		if isClickableGuiCandidate(desc) and not self.inspectedTargets[desc] then
-			local lower = getGuiCombinedText(desc)
-			local ancName = string.lower(tostring(desc.Parent and desc.Parent.Name or ""))
-			if hasAnyKeyword(lower, TRAY_KEYWORDS) or string.find(ancName, "tray", 1, true) or string.find(ancName, "ถาด", 1, true) then
-				self.lastTrayTime = now
-				self.inspectedTargets[desc] = true
-				task.spawn(function()
-					task.wait(0.05)
-					if self.isRunning and self.isEnabled and self.autoInspectTray and desc and desc.Parent then
-						clickGuiObject(desc)
-					end
-				end)
-				return
-			end
-		end
-	end
-
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if (obj:IsA("ClickDetector") or obj:IsA("ProximityPrompt")) and not self.inspectedTargets[obj] then
-			local pathLower = string.lower(obj:GetFullName())
-			if string.find(pathLower, "tray", 1, true) or string.find(pathLower, "ถาด", 1, true) then
-				self.lastTrayTime = now
-				self.inspectedTargets[obj] = true
-				task.spawn(function()
-					if not self.isRunning or not self.isEnabled or not self.autoInspectTray or not obj.Parent then return end
-					if obj:IsA("ClickDetector") then
-						pcall(function()
-							if typeof(fireclickdetector) == "function" then
-								fireclickdetector(obj)
-							end
-						end)
-					elseif obj:IsA("ProximityPrompt") then
-						pcall(function()
-							if typeof(fireproximityprompt) == "function" then
-								fireproximityprompt(obj)
-							else
-								obj:InputHoldBegin()
-								task.wait(0.05)
-								obj:InputHoldEnd()
-							end
-						end)
-					end
-				end)
-				return
-			end
-		end
 	end
 end
 
@@ -570,7 +378,7 @@ function Krypt:createGUI()
 	stroke.Thickness = 2.5
 	stroke.Parent = frame
 
-	-- แถบด้านบนสำหรับลากย้ายหน้าต่างและควบคุมปุ่มแยก
+	-- แถบด้านบนสำหรับลากย้ายหน้าต่างและควบคุมปุ่ม
 	local headerBar = Instance.new("Frame")
 	headerBar.Name = "Header"
 	headerBar.Size = UDim2.new(1, 0, 0, 38)
@@ -581,7 +389,7 @@ function Krypt:createGUI()
 	headerBar.Parent = frame
 
 	local titleLabel = Instance.new("TextLabel")
-	titleLabel.Size = UDim2.new(0, 102, 0, 22)
+	titleLabel.Size = UDim2.new(1, -144, 0, 22)
 	titleLabel.Position = UDim2.new(0, 10, 0, 9)
 	titleLabel.BackgroundTransparency = 1
 	titleLabel.Font = Enum.Font.GothamBold
@@ -592,115 +400,10 @@ function Krypt:createGUI()
 	titleLabel.ZIndex = 2
 	titleLabel.Parent = headerBar
 
-	-- ปุ่มเลื่อนเปิด-ปิดโหมดดูพระในถาดเองแยกต่างหาก
-	local trayText = Instance.new("TextLabel")
-	trayText.Size = UDim2.new(0, 62, 0, 20)
-	trayText.Position = UDim2.new(1, -442, 0, 10)
-	trayText.BackgroundTransparency = 1
-	trayText.Font = Enum.Font.GothamBold
-	trayText.TextScaled = true
-	trayText.Text = "ดูถาด: ปิด"
-	trayText.TextColor3 = COLORS.GRAY_TITLE
-	trayText.TextXAlignment = Enum.TextXAlignment.Right
-	trayText.ZIndex = 3
-	trayText.Parent = headerBar
-
-	local trayTrack = Instance.new("TextButton")
-	trayTrack.Name = "TraySwitch"
-	trayTrack.Size = UDim2.new(0, 44, 0, 22)
-	trayTrack.Position = UDim2.new(1, -376, 0, 9)
-	trayTrack.BackgroundColor3 = COLORS.TRAY_OFF_BG
-	trayTrack.BorderSizePixel = 0
-	trayTrack.Text = ""
-	trayTrack.AutoButtonColor = false
-	trayTrack.ZIndex = 3
-	trayTrack.Parent = headerBar
-	Instance.new("UICorner", trayTrack).CornerRadius = UDim.new(1, 0)
-
-	local trayKnob = Instance.new("Frame")
-	trayKnob.Name = "Knob"
-	trayKnob.Size = UDim2.new(0, 18, 0, 18)
-	trayKnob.Position = UDim2.new(0, 2, 0.5, -9)
-	trayKnob.BackgroundColor3 = COLORS.SWITCH_KNOB
-	trayKnob.BorderSizePixel = 0
-	trayKnob.ZIndex = 4
-	trayKnob.Parent = trayTrack
-	Instance.new("UICorner", trayKnob).CornerRadius = UDim.new(1, 0)
-
-	-- ปุ่มเลื่อนเปิด-ปิดโหมดไม่เช่าพระเก๊แยกต่างหาก
-	local rejectText = Instance.new("TextLabel")
-	rejectText.Size = UDim2.new(0, 74, 0, 20)
-	rejectText.Position = UDim2.new(1, -324, 0, 10)
-	rejectText.BackgroundTransparency = 1
-	rejectText.Font = Enum.Font.GothamBold
-	rejectText.TextScaled = true
-	rejectText.Text = "ไม่เช่าเก๊: ปิด"
-	rejectText.TextColor3 = COLORS.GRAY_TITLE
-	rejectText.TextXAlignment = Enum.TextXAlignment.Right
-	rejectText.ZIndex = 3
-	rejectText.Parent = headerBar
-
-	local rejectTrack = Instance.new("TextButton")
-	rejectTrack.Name = "RejectSwitch"
-	rejectTrack.Size = UDim2.new(0, 44, 0, 22)
-	rejectTrack.Position = UDim2.new(1, -246, 0, 9)
-	rejectTrack.BackgroundColor3 = COLORS.REJECT_OFF_BG
-	rejectTrack.BorderSizePixel = 0
-	rejectTrack.Text = ""
-	rejectTrack.AutoButtonColor = false
-	rejectTrack.ZIndex = 3
-	rejectTrack.Parent = headerBar
-	Instance.new("UICorner", rejectTrack).CornerRadius = UDim.new(1, 0)
-
-	local rejectKnob = Instance.new("Frame")
-	rejectKnob.Name = "Knob"
-	rejectKnob.Size = UDim2.new(0, 18, 0, 18)
-	rejectKnob.Position = UDim2.new(0, 2, 0.5, -9)
-	rejectKnob.BackgroundColor3 = COLORS.SWITCH_KNOB
-	rejectKnob.BorderSizePixel = 0
-	rejectKnob.ZIndex = 4
-	rejectKnob.Parent = rejectTrack
-	Instance.new("UICorner", rejectKnob).CornerRadius = UDim.new(1, 0)
-
-	-- ปุ่มเลื่อนเปิด-ปิดโหมดเช่าซื้อพระแท้แยกต่างหาก
-	local rentText = Instance.new("TextLabel")
-	rentText.Size = UDim2.new(0, 66, 0, 20)
-	rentText.Position = UDim2.new(1, -194, 0, 10)
-	rentText.BackgroundTransparency = 1
-	rentText.Font = Enum.Font.GothamBold
-	rentText.TextScaled = true
-	rentText.Text = "เช่าซื้อ: ปิด"
-	rentText.TextColor3 = COLORS.GRAY_TITLE
-	rentText.TextXAlignment = Enum.TextXAlignment.Right
-	rentText.ZIndex = 3
-	rentText.Parent = headerBar
-
-	local rentTrack = Instance.new("TextButton")
-	rentTrack.Name = "RentSwitch"
-	rentTrack.Size = UDim2.new(0, 44, 0, 22)
-	rentTrack.Position = UDim2.new(1, -124, 0, 9)
-	rentTrack.BackgroundColor3 = COLORS.RENT_OFF_BG
-	rentTrack.BorderSizePixel = 0
-	rentTrack.Text = ""
-	rentTrack.AutoButtonColor = false
-	rentTrack.ZIndex = 3
-	rentTrack.Parent = headerBar
-	Instance.new("UICorner", rentTrack).CornerRadius = UDim.new(1, 0)
-
-	local rentKnob = Instance.new("Frame")
-	rentKnob.Name = "Knob"
-	rentKnob.Size = UDim2.new(0, 18, 0, 18)
-	rentKnob.Position = UDim2.new(0, 2, 0.5, -9)
-	rentKnob.BackgroundColor3 = COLORS.SWITCH_KNOB
-	rentKnob.BorderSizePixel = 0
-	rentKnob.ZIndex = 4
-	rentKnob.Parent = rentTrack
-	Instance.new("UICorner", rentKnob).CornerRadius = UDim.new(1, 0)
-
 	-- ปุ่มเลื่อนเปิด/ปิดสคริปต์หลัก (Toggle Switch)
 	local switchText = Instance.new("TextLabel")
-	switchText.Size = UDim2.new(0, 44, 0, 20)
-	switchText.Position = UDim2.new(1, -76, 0, 10)
+	switchText.Size = UDim2.new(0, 48, 0, 20)
+	switchText.Position = UDim2.new(1, -134, 0, 10)
 	switchText.BackgroundTransparency = 1
 	switchText.Font = Enum.Font.GothamBold
 	switchText.TextScaled = true
@@ -713,7 +416,7 @@ function Krypt:createGUI()
 	local switchTrack = Instance.new("TextButton")
 	switchTrack.Name = "ToggleSwitch"
 	switchTrack.Size = UDim2.new(0, 44, 0, 22)
-	switchTrack.Position = UDim2.new(1, -56, 0, 9)
+	switchTrack.Position = UDim2.new(1, -82, 0, 9)
 	switchTrack.BackgroundColor3 = COLORS.SWITCH_ON_BG
 	switchTrack.BorderSizePixel = 0
 	switchTrack.Text = ""
@@ -735,8 +438,8 @@ function Krypt:createGUI()
 	-- ปุ่มพับ/ขยายหน้าต่าง
 	local collapseBtn = Instance.new("TextButton")
 	collapseBtn.Name = "CollapseBtn"
-	collapseBtn.Size = UDim2.new(0, 22, 0, 22)
-	collapseBtn.Position = UDim2.new(1, -26, 0, 9)
+	collapseBtn.Size = UDim2.new(0, 24, 0, 22)
+	collapseBtn.Position = UDim2.new(1, -28, 0, 9)
 	collapseBtn.BackgroundColor3 = COLORS.COLLAPSE_BG
 	collapseBtn.BorderSizePixel = 0
 	collapseBtn.Font = Enum.Font.GothamBold
@@ -806,18 +509,6 @@ function Krypt:createGUI()
 	closeBtn.Parent = bodyContainer
 	Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
 
-	trayTrack.Activated:Connect(function()
-		self:setAutoInspectTray(not self.autoInspectTray, false)
-	end)
-
-	rejectTrack.Activated:Connect(function()
-		self:setAutoRejectFake(not self.autoRejectFake, false)
-	end)
-
-	rentTrack.Activated:Connect(function()
-		self:setAutoBuyGenuine(not self.autoBuyGenuine, false)
-	end)
-
 	switchTrack.Activated:Connect(function()
 		self:setEnabled(not self.isEnabled, false)
 	end)
@@ -841,20 +532,8 @@ function Krypt:createGUI()
 	self.switchTrack = switchTrack
 	self.switchKnob = switchKnob
 	self.switchText = switchText
-	self.rentTrack = rentTrack
-	self.rentKnob = rentKnob
-	self.rentText = rentText
-	self.rejectTrack = rejectTrack
-	self.rejectKnob = rejectKnob
-	self.rejectText = rejectText
-	self.trayTrack = trayTrack
-	self.trayKnob = trayKnob
-	self.trayText = trayText
 	self.collapseBtn = collapseBtn
 	self:updateSwitchVisual(true)
-	self:updateRentSwitchVisual(true)
-	self:updateRejectSwitchVisual(true)
-	self:updateTraySwitchVisual(true)
 	self:setCollapsed(false, true)
 end
 
@@ -1012,8 +691,6 @@ function Krypt:updateGUI(analysis, model)
 
 		self.faultLabel.Text = #analysis.faults > 0 and table.concat(analysis.faults, "\n") or "❌ จุดผิดปกติ"
 		self.faultLabel.TextColor3 = Color3.fromRGB(255, 150, 150)
-
-		self:tryAutoRejectFake(model, analysis)
 	else
 		self.statusLabel.Text = "🟢 ของแท้!  ✅ เช่าได้!\n" .. name
 		self.statusLabel.TextColor3 = Color3.fromRGB(70, 255, 70)
@@ -1105,7 +782,6 @@ function Krypt:startHeartbeat()
 			if not model or not model.Parent then
 				self.trackedModels[model] = nil
 				self.boughtModels[model] = nil
-				self.rejectedModels[model] = nil
 			end
 		end
 
@@ -1123,10 +799,6 @@ function Krypt:startHeartbeat()
 				if self.faultLabel then self.faultLabel.Text = "" end
 			end
 		end
-
-		if self.autoInspectTray and not (self.currentModel and self.currentModel.Parent) then
-			self:tryAutoInspectTray()
-		end
 	end)
 end
 
@@ -1134,8 +806,6 @@ function Krypt:destroy()
 	self.isRunning = false
 	self.isEnabled = false
 	self.autoBuyGenuine = false
-	self.autoRejectFake = false
-	self.autoInspectTray = false
 
 	if self.heartbeatConn then
 		self.heartbeatConn:Disconnect()
@@ -1153,8 +823,6 @@ function Krypt:destroy()
 	self:clearHighlights()
 	self.trackedModels = {}
 	self.boughtModels = {}
-	self.rejectedModels = {}
-	self.inspectedTargets = {}
 
 	if self.originalBuild then
 		AmuletLab.Build = self.originalBuild
