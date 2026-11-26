@@ -21,11 +21,17 @@ local COLORS = {
     GRAY_INFO     = Color3.fromRGB(170, 170, 170),
     GRAY_FAULT    = Color3.fromRGB(150, 150, 150),
 
-    -- สีปุ่มเลื่อนเปิด/ปิด
+    -- สีปุ่มเลื่อนเปิด/ปิด และปุ่มพับหน้าต่าง
     SWITCH_ON_BG  = Color3.fromRGB(45, 165, 85),
     SWITCH_OFF_BG = Color3.fromRGB(85, 85, 92),
     SWITCH_KNOB   = Color3.fromRGB(240, 240, 245),
+    COLLAPSE_BG   = Color3.fromRGB(65, 65, 72),
 }
+
+local FULL_SIZE = UDim2.new(0, 350, 0, 210)
+local FULL_POS  = UDim2.new(0, 10, 0.5, -105)
+local MINI_SIZE = UDim2.new(0, 350, 0, 40)
+local MINI_POS  = UDim2.new(0, 10, 0.5, -105)
 
 local function formatMoney(amount)
     local num = tonumber(amount) or 0
@@ -51,17 +57,21 @@ function Krypt.new()
     local self = setmetatable({}, Krypt)
     self.isRunning = true
     self.isEnabled = true
+    self.isCollapsed = false
     self.currentModel = nil
     self.trackedModels = {}
     self.originalBuild = nil
     self.heartbeatConn = nil
     self.gui = nil
+    self.mainFrame = nil
+    self.bodyContainer = nil
     self.statusLabel = nil
     self.infoLabel = nil
     self.faultLabel = nil
     self.switchTrack = nil
     self.switchKnob = nil
     self.switchText = nil
+    self.collapseBtn = nil
     return self
 end
 
@@ -74,6 +84,24 @@ function Krypt:clearHighlights()
                 end
             end
         end
+    end
+end
+
+function Krypt:setCollapsed(collapsed, instant)
+    if not self.isRunning or not self.mainFrame or not self.bodyContainer or not self.collapseBtn then return end
+    self.isCollapsed = (collapsed == true)
+
+    local targetSize = self.isCollapsed and MINI_SIZE or FULL_SIZE
+    local targetPos  = self.isCollapsed and MINI_POS or FULL_POS
+    self.collapseBtn.Text = self.isCollapsed and "+" or "—"
+    self.bodyContainer.Visible = not self.isCollapsed
+
+    if instant then
+        self.mainFrame.Size = targetSize
+        self.mainFrame.Position = targetPos
+    else
+        local info = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(self.mainFrame, info, { Size = targetSize, Position = targetPos }):Play()
     end
 end
 
@@ -153,11 +181,12 @@ function Krypt:createGUI()
 
     local frame = Instance.new("Frame")
     frame.Name = "Main"
-    frame.Size = UDim2.new(0, 350, 0, 210)
-    frame.Position = UDim2.new(0, 10, 0.5, -105)
+    frame.Size = FULL_SIZE
+    frame.Position = FULL_POS
     frame.BackgroundColor3 = COLORS.UI_BG
     frame.BackgroundTransparency = 0.08
     frame.BorderSizePixel = 0
+    frame.ClipsDescendants = true
     frame.Parent = sg
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 14)
 
@@ -167,7 +196,7 @@ function Krypt:createGUI()
     stroke.Parent = frame
 
     local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -135, 0, 28)
+    titleLabel.Size = UDim2.new(1, -162, 0, 28)
     titleLabel.Position = UDim2.new(0, 10, 0, 6)
     titleLabel.BackgroundTransparency = 1
     titleLabel.Font = Enum.Font.GothamBold
@@ -179,8 +208,8 @@ function Krypt:createGUI()
 
     -- ปุ่มเลื่อนเปิด/ปิดสคริปต์ (Toggle Switch)
     local switchText = Instance.new("TextLabel")
-    switchText.Size = UDim2.new(0, 52, 0, 22)
-    switchText.Position = UDim2.new(1, -104, 0, 9)
+    switchText.Size = UDim2.new(0, 50, 0, 22)
+    switchText.Position = UDim2.new(1, -130, 0, 9)
     switchText.BackgroundTransparency = 1
     switchText.Font = Enum.Font.GothamBold
     switchText.TextScaled = true
@@ -192,7 +221,7 @@ function Krypt:createGUI()
     local switchTrack = Instance.new("TextButton")
     switchTrack.Name = "ToggleSwitch"
     switchTrack.Size = UDim2.new(0, 44, 0, 22)
-    switchTrack.Position = UDim2.new(1, -54, 0, 9)
+    switchTrack.Position = UDim2.new(1, -82, 0, 9)
     switchTrack.BackgroundColor3 = COLORS.SWITCH_ON_BG
     switchTrack.BorderSizePixel = 0
     switchTrack.Text = ""
@@ -209,9 +238,32 @@ function Krypt:createGUI()
     switchKnob.Parent = switchTrack
     Instance.new("UICorner", switchKnob).CornerRadius = UDim.new(1, 0)
 
+    -- ปุ่มพับ/ขยายหน้าต่าง
+    local collapseBtn = Instance.new("TextButton")
+    collapseBtn.Name = "CollapseBtn"
+    collapseBtn.Size = UDim2.new(0, 24, 0, 22)
+    collapseBtn.Position = UDim2.new(1, -34, 0, 9)
+    collapseBtn.BackgroundColor3 = COLORS.COLLAPSE_BG
+    collapseBtn.BorderSizePixel = 0
+    collapseBtn.Font = Enum.Font.GothamBold
+    collapseBtn.TextScaled = true
+    collapseBtn.Text = "—"
+    collapseBtn.TextColor3 = Color3.new(1, 1, 1)
+    collapseBtn.Parent = frame
+    Instance.new("UICorner", collapseBtn).CornerRadius = UDim.new(0, 6)
+
+    -- ส่วนเนื้อหาที่พับซ่อนได้
+    local bodyContainer = Instance.new("Frame")
+    bodyContainer.Name = "Body"
+    bodyContainer.Size = UDim2.new(1, 0, 1, -36)
+    bodyContainer.Position = UDim2.new(0, 0, 0, 36)
+    bodyContainer.BackgroundTransparency = 1
+    bodyContainer.BorderSizePixel = 0
+    bodyContainer.Parent = frame
+
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, -20, 0, 52)
-    statusLabel.Position = UDim2.new(0, 10, 0, 38)
+    statusLabel.Position = UDim2.new(0, 10, 0, 2)
     statusLabel.BackgroundTransparency = 1
     statusLabel.Font = Enum.Font.GothamBold
     statusLabel.TextScaled = true
@@ -220,11 +272,11 @@ function Krypt:createGUI()
     statusLabel.TextColor3 = COLORS.GRAY_STATUS
     statusLabel.TextXAlignment = Enum.TextXAlignment.Left
     statusLabel.TextYAlignment = Enum.TextYAlignment.Top
-    statusLabel.Parent = frame
+    statusLabel.Parent = bodyContainer
 
     local infoLabel = Instance.new("TextLabel")
     infoLabel.Size = UDim2.new(1, -20, 0, 26)
-    infoLabel.Position = UDim2.new(0, 10, 0, 94)
+    infoLabel.Position = UDim2.new(0, 10, 0, 58)
     infoLabel.BackgroundTransparency = 1
     infoLabel.Font = Enum.Font.Gotham
     infoLabel.TextScaled = true
@@ -232,11 +284,11 @@ function Krypt:createGUI()
     infoLabel.Text = ""
     infoLabel.TextColor3 = COLORS.GRAY_INFO
     infoLabel.TextXAlignment = Enum.TextXAlignment.Left
-    infoLabel.Parent = frame
+    infoLabel.Parent = bodyContainer
 
     local faultLabel = Instance.new("TextLabel")
     faultLabel.Size = UDim2.new(1, -20, 0, 56)
-    faultLabel.Position = UDim2.new(0, 10, 0, 122)
+    faultLabel.Position = UDim2.new(0, 10, 0, 86)
     faultLabel.BackgroundTransparency = 1
     faultLabel.Font = Enum.Font.Gotham
     faultLabel.TextScaled = true
@@ -245,7 +297,7 @@ function Krypt:createGUI()
     faultLabel.TextColor3 = COLORS.GRAY_FAULT
     faultLabel.TextXAlignment = Enum.TextXAlignment.Left
     faultLabel.TextYAlignment = Enum.TextYAlignment.Top
-    faultLabel.Parent = frame
+    faultLabel.Parent = bodyContainer
 
     local closeBtn = Instance.new("TextButton")
     closeBtn.Size = UDim2.new(0, 100, 0, 26)
@@ -255,11 +307,15 @@ function Krypt:createGUI()
     closeBtn.TextScaled = true
     closeBtn.Text = "❌ ปิดสคริปต์"
     closeBtn.TextColor3 = Color3.new(1, 1, 1)
-    closeBtn.Parent = frame
+    closeBtn.Parent = bodyContainer
     Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
 
     switchTrack.Activated:Connect(function()
         self:setEnabled(not self.isEnabled, false)
+    end)
+
+    collapseBtn.Activated:Connect(function()
+        self:setCollapsed(not self.isCollapsed, false)
     end)
 
     closeBtn.Activated:Connect(function()
@@ -267,13 +323,17 @@ function Krypt:createGUI()
     end)
 
     self.gui = sg
+    self.mainFrame = frame
+    self.bodyContainer = bodyContainer
     self.statusLabel = statusLabel
     self.infoLabel = infoLabel
     self.faultLabel = faultLabel
     self.switchTrack = switchTrack
     self.switchKnob = switchKnob
     self.switchText = switchText
+    self.collapseBtn = collapseBtn
     self:updateSwitchVisual(true)
+    self:setCollapsed(false, true)
 end
 
 function Krypt:analyzeAmulet(amuletData)
