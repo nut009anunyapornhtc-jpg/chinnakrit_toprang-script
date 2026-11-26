@@ -1,6 +1,7 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -19,6 +20,11 @@ local COLORS = {
     GRAY_STATUS   = Color3.fromRGB(190, 190, 190),
     GRAY_INFO     = Color3.fromRGB(170, 170, 170),
     GRAY_FAULT    = Color3.fromRGB(150, 150, 150),
+
+    -- สีปุ่มเลื่อนเปิด/ปิด
+    SWITCH_ON_BG  = Color3.fromRGB(45, 165, 85),
+    SWITCH_OFF_BG = Color3.fromRGB(85, 85, 92),
+    SWITCH_KNOB   = Color3.fromRGB(240, 240, 245),
 }
 
 local function formatMoney(amount)
@@ -44,6 +50,7 @@ Krypt.__index = Krypt
 function Krypt.new()
     local self = setmetatable({}, Krypt)
     self.isRunning = true
+    self.isEnabled = true
     self.currentModel = nil
     self.trackedModels = {}
     self.originalBuild = nil
@@ -52,7 +59,85 @@ function Krypt.new()
     self.statusLabel = nil
     self.infoLabel = nil
     self.faultLabel = nil
+    self.switchTrack = nil
+    self.switchKnob = nil
+    self.switchText = nil
     return self
+end
+
+function Krypt:clearHighlights()
+    for model, _ in pairs(self.trackedModels) do
+        if model and model.Parent then
+            for _, child in pairs(model:GetChildren()) do
+                if child:IsA("Highlight") and child.Name == "SongPhraHL" then
+                    child:Destroy()
+                end
+            end
+        end
+    end
+end
+
+function Krypt:updateSwitchVisual(instant)
+    if not self.switchTrack or not self.switchKnob or not self.switchText then return end
+
+    local targetPos = self.isEnabled
+        and UDim2.new(1, -20, 0.5, -9)
+        or UDim2.new(0, 2, 0.5, -9)
+
+    local targetBg = self.isEnabled
+        and COLORS.SWITCH_ON_BG
+        or COLORS.SWITCH_OFF_BG
+
+    self.switchText.Text = self.isEnabled and "เปิดอยู่" or "ปิดอยู่"
+
+    if instant then
+        self.switchKnob.Position = targetPos
+        self.switchTrack.BackgroundColor3 = targetBg
+    else
+        local info = TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+        TweenService:Create(self.switchKnob, info, { Position = targetPos }):Play()
+        TweenService:Create(self.switchTrack, info, { BackgroundColor3 = targetBg }):Play()
+    end
+end
+
+function Krypt:setEnabled(enabled, instant)
+    if not self.isRunning then return end
+    self.isEnabled = (enabled == true)
+    self:updateSwitchVisual(instant)
+
+    if self.isEnabled then
+        self:hookBuild()
+        for model, analysis in pairs(self.trackedModels) do
+            if model and model.Parent and analysis then
+                self:applyHighlight(model, analysis.isFake)
+            end
+        end
+
+        if self.currentModel and self.currentModel.Parent and self.trackedModels[self.currentModel] then
+            pcall(function()
+                self:updateGUI(self.trackedModels[self.currentModel], self.currentModel)
+            end)
+        elseif self.statusLabel then
+            self.statusLabel.Text = "⏳ กำลังรอพระ...\n(กดส่องพระ หรือรอพระขึ้นบนโต๊ะ)"
+            self.statusLabel.TextColor3 = COLORS.GRAY_STATUS
+            if self.infoLabel then self.infoLabel.Text = "" end
+            if self.faultLabel then self.faultLabel.Text = "" end
+        end
+    else
+        if self.originalBuild then
+            AmuletLab.Build = self.originalBuild
+            _G.KryptOriginalBuild = nil
+            self.originalBuild = nil
+        end
+        self:clearHighlights()
+
+        if self.statusLabel then
+            self.statusLabel.Text = "⏸️ ปิดการทำงานของสคริปต์อยู่\n(เลื่อนปุ่มด้านบนเพื่อเปิดใช้งาน)"
+            self.statusLabel.TextColor3 = COLORS.GRAY_STATUS
+        end
+        if self.infoLabel then self.infoLabel.Text = "" end
+        if self.faultLabel then self.faultLabel.Text = "" end
+    end
 end
 
 function Krypt:createGUI()
@@ -82,7 +167,7 @@ function Krypt:createGUI()
     stroke.Parent = frame
 
     local titleLabel = Instance.new("TextLabel")
-    titleLabel.Size = UDim2.new(1, -20, 0, 28)
+    titleLabel.Size = UDim2.new(1, -135, 0, 28)
     titleLabel.Position = UDim2.new(0, 10, 0, 6)
     titleLabel.BackgroundTransparency = 1
     titleLabel.Font = Enum.Font.GothamBold
@@ -91,6 +176,38 @@ function Krypt:createGUI()
     titleLabel.TextColor3 = COLORS.GRAY_TITLE
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
     titleLabel.Parent = frame
+
+    -- ปุ่มเลื่อนเปิด/ปิดสคริปต์ (Toggle Switch)
+    local switchText = Instance.new("TextLabel")
+    switchText.Size = UDim2.new(0, 52, 0, 22)
+    switchText.Position = UDim2.new(1, -104, 0, 9)
+    switchText.BackgroundTransparency = 1
+    switchText.Font = Enum.Font.GothamBold
+    switchText.TextScaled = true
+    switchText.Text = "เปิดอยู่"
+    switchText.TextColor3 = COLORS.GRAY_TITLE
+    switchText.TextXAlignment = Enum.TextXAlignment.Right
+    switchText.Parent = frame
+
+    local switchTrack = Instance.new("TextButton")
+    switchTrack.Name = "ToggleSwitch"
+    switchTrack.Size = UDim2.new(0, 44, 0, 22)
+    switchTrack.Position = UDim2.new(1, -54, 0, 9)
+    switchTrack.BackgroundColor3 = COLORS.SWITCH_ON_BG
+    switchTrack.BorderSizePixel = 0
+    switchTrack.Text = ""
+    switchTrack.AutoButtonColor = false
+    switchTrack.Parent = frame
+    Instance.new("UICorner", switchTrack).CornerRadius = UDim.new(1, 0)
+
+    local switchKnob = Instance.new("Frame")
+    switchKnob.Name = "Knob"
+    switchKnob.Size = UDim2.new(0, 18, 0, 18)
+    switchKnob.Position = UDim2.new(1, -20, 0.5, -9)
+    switchKnob.BackgroundColor3 = COLORS.SWITCH_KNOB
+    switchKnob.BorderSizePixel = 0
+    switchKnob.Parent = switchTrack
+    Instance.new("UICorner", switchKnob).CornerRadius = UDim.new(1, 0)
 
     local statusLabel = Instance.new("TextLabel")
     statusLabel.Size = UDim2.new(1, -20, 0, 52)
@@ -141,6 +258,10 @@ function Krypt:createGUI()
     closeBtn.Parent = frame
     Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 8)
 
+    switchTrack.Activated:Connect(function()
+        self:setEnabled(not self.isEnabled, false)
+    end)
+
     closeBtn.Activated:Connect(function()
         self:destroy()
     end)
@@ -149,6 +270,10 @@ function Krypt:createGUI()
     self.statusLabel = statusLabel
     self.infoLabel = infoLabel
     self.faultLabel = faultLabel
+    self.switchTrack = switchTrack
+    self.switchKnob = switchKnob
+    self.switchText = switchText
+    self:updateSwitchVisual(true)
 end
 
 function Krypt:analyzeAmulet(amuletData)
@@ -246,7 +371,7 @@ function Krypt:analyzeAmulet(amuletData)
 end
 
 function Krypt:applyHighlight(model, isFake)
-    if not model or not model.Parent then return end
+    if not self.isRunning or not self.isEnabled or not model or not model.Parent then return end
 
     for _, child in pairs(model:GetChildren()) do
         if child:IsA("Highlight") then
@@ -277,7 +402,7 @@ function Krypt:applyHighlight(model, isFake)
 end
 
 function Krypt:updateGUI(analysis, model)
-    if not self.isRunning or not self.statusLabel or not analysis then return end
+    if not self.isRunning or not self.isEnabled or not self.statusLabel or not analysis then return end
 
     local data = analysis.data
     local modelInfo = analysis.modelInfo
@@ -323,6 +448,7 @@ function Krypt:updateGUI(analysis, model)
 end
 
 function Krypt:hookBuild()
+    if self.originalBuild then return end
     if type(AmuletLab.Build) ~= "function" then
         warn("[Krypt] ไม่พบ AmuletLab.Build")
         return
@@ -337,7 +463,7 @@ function Krypt:hookBuild()
 
     AmuletLab.Build = function(amuletData, parent, ...)
         local model = self.originalBuild(amuletData, parent, ...)
-        if not self.isRunning or not model then
+        if not self.isRunning or not self.isEnabled or not model then
             return model
         end
 
@@ -351,7 +477,7 @@ function Krypt:hookBuild()
         end
 
         task.defer(function()
-            if not self.isRunning or not model or not model.Parent then return end
+            if not self.isRunning or not self.isEnabled or not model or not model.Parent then return end
             if model:FindFirstAncestorWhichIsA("ViewportFrame") then return end
 
             self.trackedModels[model] = analysis
@@ -361,7 +487,7 @@ function Krypt:hookBuild()
             end)
 
             model.ChildAdded:Connect(function(child)
-                if not self.isRunning then return end
+                if not self.isRunning or not self.isEnabled then return end
                 if child:IsA("Highlight") and child.Name ~= "SongPhraHL" then
                     task.defer(function()
                         if child.Parent then child.Enabled = false end
@@ -387,7 +513,7 @@ function Krypt:startHeartbeat()
     end
 
     self.heartbeatConn = RunService.Heartbeat:Connect(function()
-        if not self.isRunning then return end
+        if not self.isRunning or not self.isEnabled then return end
 
         for model, _ in pairs(self.trackedModels) do
             if not model or not model.Parent then
@@ -414,21 +540,14 @@ end
 
 function Krypt:destroy()
     self.isRunning = false
+    self.isEnabled = false
 
     if self.heartbeatConn then
         self.heartbeatConn:Disconnect()
         self.heartbeatConn = nil
     end
 
-    for model, _ in pairs(self.trackedModels) do
-        if model and model.Parent then
-            for _, child in pairs(model:GetChildren()) do
-                if child:IsA("Highlight") and child.Name == "SongPhraHL" then
-                    child:Destroy()
-                end
-            end
-        end
-    end
+    self:clearHighlights()
     self.trackedModels = {}
 
     if self.originalBuild then
